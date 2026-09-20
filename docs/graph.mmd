@@ -1,0 +1,8 @@
+graph LR
+    START([开始]) --> P[Planner<br/>拆解任务]
+    P --> E[Executor<br/>工具执行 · 可并行]
+    E -->|审核通过| S[Summarizer<br/>汇总成人话]
+    E -->|审核不通过| R[Reviewer<br/>质检]
+    R -->|retry lt 3| E
+    R -->|retry ge 3| S
+    S --> END([结束])
