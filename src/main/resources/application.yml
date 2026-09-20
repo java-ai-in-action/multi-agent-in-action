@@ -1,0 +1,42 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: multi-agent-customer-service
+
+  # ---- 状态快照持久化（Checkpoint）----
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+
+  cloud:
+    # ---- Agent 注册中心（生产级：多 Agent 服务动态发现、可灰度）----
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+        metadata:
+          agent-role: customer-service   # 供网关按角色路由
+    # ---- 限流降级（生产级：模型接口有 QPS 上限，必须能兜底）----
+    sentinel:
+      transport:
+        dashboard: ${SENTINEL_DASHBOARD:127.0.0.1:8858}
+      eager: true
+
+  ai:
+    # ---- 模型（DashScope / 通义千问）----
+    dashscope:
+      api-key: ${DASHSCOPE_API_KEY}
+    # ---- Graph 编排：开启状态快照 ----
+    alibaba:
+      graph:
+        checkpoint:
+          enabled: true
+          store: redis
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
