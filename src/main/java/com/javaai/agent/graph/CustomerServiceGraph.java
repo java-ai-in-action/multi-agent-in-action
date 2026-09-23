@@ -2,11 +2,12 @@ package com.javaai.agent.graph;
 
 import com.alibaba.cloud.ai.graph.CompiledGraph;
 import com.alibaba.cloud.ai.graph.StateGraph;
+import com.alibaba.cloud.ai.graph.exception.GraphStateException;
 import com.javaai.agent.nodes.ExecutorNode;
 import com.javaai.agent.nodes.PlannerNode;
 import com.javaai.agent.nodes.ReviewerNode;
 import com.javaai.agent.nodes.SummarizerNode;
-import com.javaai.agent.state.AgentState;
+import com.javaai.agent.state.WorkflowKeys;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -25,7 +26,9 @@ import static com.alibaba.cloud.ai.graph.action.AsyncNodeAction.node_async;
  *                                                   └─(retry≥3)→ Summarizer
  * </pre>
  *
- * <p>三个「保命」设计都在这段代码里：异步节点、重试硬上限、条件边。
+ * <p><b>⚠️ 注意</b>：{@code StateGraph} / {@code CompiledGraph} <b>都不是泛型类</b>，
+ * 状态由 {@code OverAllState}（Map 包装）承载。所以这里是 {@code StateGraph} 而不是
+ * {@code StateGraph<AgentState>}。
  */
 @Component
 public class CustomerServiceGraph {
@@ -46,15 +49,15 @@ public class CustomerServiceGraph {
         this.summarizer = summarizer;
     }
 
-    public CompiledGraph<AgentState> build() throws Exception {
-        // 1. 定义图 + 状态载体
-        StateGraph<AgentState> graph = new StateGraph<>(AgentState::new);
+    public CompiledGraph build() throws GraphStateException {
+        // 1. 建图：状态键策略由 KeyStrategyFactory 提供
+        StateGraph graph = new StateGraph(WorkflowKeys.keyStrategyFactory());
 
-        // 2. 注册 4 个节点（node_async = 异步执行，LLM 调用必须异步）
-        graph.addNode("planner", node_async(planner::apply));
-        graph.addNode("executor", node_async(executor::apply));
-        graph.addNode("reviewer", node_async(reviewer::apply));
-        graph.addNode("summarizer", node_async(summarizer::apply));
+        // 2. 注册 4 个节点（node_async 把同步 NodeAction 包成异步节点）
+        graph.addNode("planner", node_async(planner));
+        graph.addNode("executor", node_async(executor));
+        graph.addNode("reviewer", node_async(reviewer));
+        graph.addNode("summarizer", node_async(summarizer));
 
         // 3. 开始 → Planner → Executor
         graph.addEdge(START, "planner");
@@ -62,12 +65,14 @@ public class CustomerServiceGraph {
 
         // 4. 条件边：审核通过 → 汇总；不通过 → 交 Reviewer
         graph.addConditionalEdges("executor",
-                edge_async(state -> state.isReviewPassed() ? "summarizer" : "reviewer"),
+                edge_async(state -> state.value(WorkflowKeys.REVIEW_PASSED, false)
+                        ? "summarizer" : "reviewer"),
                 Map.of("summarizer", "summarizer", "reviewer", "reviewer"));
 
         // 5. 条件边：打回重做（最多 MAX_RETRY 次，超了直接汇总，防止死循环）
         graph.addConditionalEdges("reviewer",
-                edge_async(state -> state.getRetryCount() < MAX_RETRY ? "executor" : "summarizer"),
+                edge_async(state -> state.value(WorkflowKeys.RETRY_COUNT, 0) < MAX_RETRY
+                        ? "executor" : "summarizer"),
                 Map.of("executor", "executor", "summarizer", "summarizer"));
 
         graph.addEdge("summarizer", END);
