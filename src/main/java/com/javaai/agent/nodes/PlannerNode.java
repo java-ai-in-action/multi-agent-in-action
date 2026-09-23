@@ -1,6 +1,8 @@
 package com.javaai.agent.nodes;
 
-import com.javaai.agent.state.AgentState;
+import com.alibaba.cloud.ai.graph.OverAllState;
+import com.alibaba.cloud.ai.graph.action.NodeAction;
+import com.javaai.agent.state.WorkflowKeys;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Component;
 
@@ -13,9 +15,11 @@ import java.util.Map;
  *
  * <p><b>踩坑点①</b>：计划必须强制 JSON 输出。让模型自由发挥自然语言计划，
  * 下游解析全靠正则，脆得一批。
+ *
+ * <p>直接实现框架的 {@link NodeAction}，在图中通过 {@code node_async(planner)} 注册。
  */
 @Component
-public class PlannerNode implements AgentNode {
+public class PlannerNode implements NodeAction {
 
     private final ChatClient chatClient;
 
@@ -30,16 +34,16 @@ public class PlannerNode implements AgentNode {
     }
 
     @Override
-    public Map<String, Object> apply(AgentState state) {
+    public Map<String, Object> apply(OverAllState state) {
+        // 从 OverAllState 按「键」读取状态
+        String message = state.value(WorkflowKeys.MESSAGE, "");
+
         String answer = chatClient.prompt()
-                .user(u -> u.text("用户诉求：{msg}\n历史摘要：{summary}")
-                        .param("msg", state.latestUserMessage())
-                        .param("summary", state.getHistorySummary()))
+                .user(u -> u.text("用户诉求：{msg}").param("msg", message))
                 .call()
                 .content();
 
-        List<String> tasks = parseJsonArray(answer);
-        return Map.of(AgentState.TASKS, tasks);
+        return Map.of(WorkflowKeys.TASKS, parseJsonArray(answer));
     }
 
     /** 解析模型输出的 JSON 数组；解析失败则退化为「整条诉求 = 单个任务」 */
@@ -54,8 +58,10 @@ public class PlannerNode implements AgentNode {
                 }
             }
         } catch (Exception e) {
-            tasks.add(raw.trim());
+            if (raw != null && !raw.isBlank()) {
+                tasks.add(raw.trim());
+            }
         }
-        return tasks.isEmpty() ? List.of(state.latestUserMessage()) : tasks;
+        return tasks.isEmpty() ? List.of("处理用户诉求") : tasks;
     }
 }
