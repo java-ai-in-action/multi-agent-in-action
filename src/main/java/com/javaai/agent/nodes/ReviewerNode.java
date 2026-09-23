@@ -1,6 +1,8 @@
 package com.javaai.agent.nodes;
 
-import com.javaai.agent.state.AgentState;
+import com.alibaba.cloud.ai.graph.OverAllState;
+import com.alibaba.cloud.ai.graph.action.NodeAction;
+import com.javaai.agent.state.WorkflowKeys;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Component;
 
@@ -15,7 +17,7 @@ import java.util.Map;
  * Reviewer 会变成「讨好型人格」——永远说 OK。
  */
 @Component
-public class ReviewerNode implements AgentNode {
+public class ReviewerNode implements NodeAction {
 
     private final ChatClient chatClient;
 
@@ -33,19 +35,23 @@ public class ReviewerNode implements AgentNode {
     }
 
     @Override
-    public Map<String, Object> apply(AgentState state) {
+    public Map<String, Object> apply(OverAllState state) {
+        String message = state.value(WorkflowKeys.MESSAGE, "");
+        Object results = state.data().getOrDefault(WorkflowKeys.RESULTS, Map.of());
+        int retry = state.value(WorkflowKeys.RETRY_COUNT, 0);
+
         String verdict = chatClient.prompt()
                 .user(u -> u.text("用户原始诉求：{q}\n执行结果：{r}")
-                        .param("q", state.latestUserMessage())
-                        .param("r", state.getResults().toString()))
+                        .param("q", message)
+                        .param("r", results.toString()))
                 .call()
                 .content();
 
-        boolean passed = verdict.trim().startsWith("通过");
+        boolean passed = verdict != null && verdict.trim().startsWith("通过");
 
         // 注意：无论通过与否都计数，配合图上的条件边形成硬上限
         return Map.of(
-                AgentState.REVIEW_PASSED, passed,
-                AgentState.RETRY_COUNT, state.getRetryCount() + 1);
+                WorkflowKeys.REVIEW_PASSED, passed,
+                WorkflowKeys.RETRY_COUNT, retry + 1);
     }
 }
