@@ -15,8 +15,9 @@
 ```
 src/main/java/com/javaai/agent/
 ├── MultiAgentApplication.java          # 主类
-├── state/AgentState.java               # 状态载体（分层：短期/长期/中间）
+├── state/WorkflowKeys.java             # 状态键定义 + KeyStrategyFactory
 ├── graph/CustomerServiceGraph.java     # StateGraph 编排（核心）
+├── api/ChatController.java             # 演示入口
 └── nodes/
     ├── PlannerNode.java                # 拆解用户诉求为子任务
     ├── ExecutorNode.java               # 调工具执行子任务（可并行）
@@ -24,6 +25,30 @@ src/main/java/com/javaai/agent/
     └── SummarizerNode.java             # 汇总成人话
 docs/graph.mmd                          # 编排流程图（Mermaid）
 ```
+
+## ⚠️ 关于泛型（一个很容易踩的坑）
+
+Spring AI Alibaba Graph 的状态载体是 **`OverAllState`**（一个 Map 的包装），**不是泛型参数**。所以：
+
+```java
+// ❌ 错误写法（本仓库早期版本踩过，感谢 issue #1 / #2 指出）
+StateGraph<AgentState> graph = new StateGraph<>(AgentState::new);
+public CompiledGraph<AgentState> build() { ... }
+for (NodeOutput<AgentState> out : graph.stream(...)) { ... }
+
+// ✅ 正确写法
+StateGraph graph = new StateGraph(WorkflowKeys.keyStrategyFactory());
+CompiledGraph compiled = graph.compile();
+public CompiledGraph build() { ... }
+for (NodeOutput out : compiled.stream(...)) { ... }
+```
+
+要点：
+
+- `StateGraph` / `CompiledGraph` **都不是泛型类**（源码：`public class StateGraph` / `public class CompiledGraph`）
+- 状态**读**：`state.value(KEY, default)`；状态**写**：节点返回 `Map.of(KEY, value)`
+- 节点实现框架的 `NodeAction`（同步，`Map<String,Object> apply(OverAllState)`）或 `AsyncNodeAction`（异步），图中用 `node_async(...)` 包装注册
+- 条件边用 `edge_async(state -> "...")`，返回下一个节点 id 的字符串
 
 ## 🚀 快速开始
 
@@ -62,7 +87,7 @@ graph LR
 
 1. **`node_async`**：LLM 调用是 IO 密集，节点必须异步执行，否则线程全被占死
 2. **重试硬上限（3 次）**：`retryCount < 3` 这一行，防的是「Reviewer 反复打回烧钱到破产」
-3. **状态分层**：`AgentState` 严格区分短期（当前轮）/ 长期（历史摘要）/ 中间（任务、重试次数），只把必要的喂给模型
+3. **状态键策略**：`KeyStrategy.REPLACE` / `APPEND` 决定同一个键多次写入时如何合并
 4. **Reviewer 独立**：质检的 Agent 绝不与干活的 Agent 是同一个——就像代码必须过 CI
 
 ## 📊 实测数据（线上客服系统，30 天）
@@ -80,7 +105,7 @@ graph LR
 
 | # | 坑 | 后果 | 解法 |
 |---|---|---|---|
-| 1 | Planner 输出自然语言计划 | 下游解析脆弱 | 强制 JSON Schema 输出 |
+| 1 | Planner 输出自然语言计划 | 下游解析脆弱 | 强制 JSON 输出 |
 | 2 | Executor 不设超时 | 一个工具卡死整图挂死 | 每节点独立超时 + 兜底 |
 | 3 | Reviewer 审核标准模糊 | 永远通过 / 永远打回 | 标准写进 Prompt，列明 3–5 条 |
 | 4 | 没有重试上限 | 死循环烧钱 | 硬上限（3 次） |
