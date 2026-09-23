@@ -1,6 +1,8 @@
 package com.javaai.agent.nodes;
 
-import com.javaai.agent.state.AgentState;
+import com.alibaba.cloud.ai.graph.OverAllState;
+import com.alibaba.cloud.ai.graph.action.NodeAction;
+import com.javaai.agent.state.WorkflowKeys;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Component;
 
@@ -10,10 +12,10 @@ import java.util.Map;
  * Summarizer Agent：把结构化结果「翻译成人话」。
  *
  * <p><b>铁律</b>：它只做翻译，<b>不允许新增任何事实</b>——否则就是在编造。
- * 所以它的 Prompt 里第一条就是「不允许新增执行结果里没有的事实」，而不是「写得好听点」。
+ * 所以它的 Prompt 第一条就是「不允许新增执行结果里没有的事实」，而不是「写得好听点」。
  */
 @Component
-public class SummarizerNode implements AgentNode {
+public class SummarizerNode implements NodeAction {
 
     private final ChatClient chatClient;
 
@@ -30,13 +32,17 @@ public class SummarizerNode implements AgentNode {
     }
 
     @Override
-    public Map<String, Object> apply(AgentState state) {
+    public Map<String, Object> apply(OverAllState state) {
+        String message = state.value(WorkflowKeys.MESSAGE, "");
+        Object results = state.data().getOrDefault(WorkflowKeys.RESULTS, Map.of());
+
         String answer = chatClient.prompt()
                 .user(u -> u.text("用户诉求：{q}\n执行结果：{r}")
-                        .param("q", state.latestUserMessage())
-                        .param("r", state.getResults().toString()))
+                        .param("q", message)
+                        .param("r", results.toString()))
                 .call()
                 .content();
-        return Map.of(AgentState.FINAL_ANSWER, answer);
+
+        return Map.of(WorkflowKeys.FINAL_ANSWER, answer == null ? "" : answer);
     }
 }
